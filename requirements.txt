@@ -1,2 +1,4 @@
 customtkinter
+requests
+keyring
 packaging

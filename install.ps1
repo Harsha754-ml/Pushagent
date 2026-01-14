@@ -7,8 +7,8 @@ if (-not (Get-Command "python" -ErrorAction SilentlyContinue)) {
 
 Write-Host "Checking for GitHub CLI (gh)..." -ForegroundColor Cyan
 if (-not (Get-Command "gh" -ErrorAction SilentlyContinue)) {
-    Write-Error "GitHub CLI ('gh') is not installed or not in PATH."
-    Write-Host "Please install it from https://cli.github.com/"
+    Write-Error "GitHub CLI ('gh') is not installed."
+    Write-Host "Please install it: https://cli.github.com/"
     exit 1
 }
 
@@ -30,10 +30,6 @@ $ahkScriptPath = Join-Path $PWD "hotkey.ahk"
 
 Write-Host "Creating startup shortcut at: $shortcutPath" -ForegroundColor Cyan
 
-# We need to run the AHK script. Assuming AutoHotkey v2 is installed and associated with .ahk files.
-# If not, we might need to point to AutoHotkey.exe. 
-# For now, we create a shortcut to the .ahk file directly.
-
 $shortcut = $wsh.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $ahkScriptPath
 $shortcut.WorkingDirectory = $PWD
@@ -44,3 +40,4 @@ Write-Host "Setup Complete!" -ForegroundColor Green
 Write-Host "1. Ensure AutoHotkey v2 is installed."
 Write-Host "2. Double-click 'hotkey.ahk' to start the agent now."
 Write-Host "3. Press Ctrl+Shift+G to test."
+Write-Host "NOTE: To use AI features, get a free API key from https://aistudio.google.com/app/apikey"
