@@ -1,6 +1,39 @@
+# Python
 __pycache__/
-*.pyc
-api_key.txt
+*.py[cod]
+*$py.class
+*.so
+.Python
 build/
+develop-eggs/
 dist/
-*.spec
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+.venv/
+env/
+.env
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project Specific
+*.log
+2.0/__pycache__/
+api_key.txt

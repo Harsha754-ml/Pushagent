@@ -10,6 +10,10 @@ import keyring
 import re
 import glob
 import traceback
+import socket
+import win32com.client
+import win32gui
+import win32con
 from google import genai
 from google.genai import types
 
@@ -17,6 +21,7 @@ from google.genai import types
 APP_NAME = "PushAgent"
 KEYRING_SERVICE = "PushAgent_GeminiAPI"
 KEYRING_USER = "user_key"
+IPC_PORT = 65432  # Local port for single-instance IPC
 
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
@@ -25,7 +30,6 @@ class GeminiClient:
     def __init__(self, api_key):
         self.api_key = api_key
         if self.api_key:
-            # Fix: Explicitly set API version to v1 to avoid v1beta 404 errors
             self.client = genai.Client(
                 api_key=self.api_key,
                 http_options=types.HttpOptions(api_version="v1")
@@ -34,41 +38,24 @@ class GeminiClient:
             self.client = None
 
     def list_models(self):
-        if not self.client:
-            return []
+        if not self.client: return []
         try:
             models = []
-            # List models using the new SDK
-            # Fix: Iterate and store exact names (e.g., "models/gemini-1.5-flash")
             for m in self.client.models.list():
-                 # Fix: Remove 'supported_generation_methods' check as it causes errors on some objects
-                 # Just filter by name convention
                  if "gemini" in m.name.lower():
                      models.append(m.name)
-            
-            # Sort to put latest/flash on top
             models.sort(reverse=True) 
             return models
         except Exception as e:
             print(f"Model list error: {e}")
-            # Fallback list with correct full names
-            return ["models/gemini-1.5-flash", "models/gemini-1.5-pro", "models/gemini-2.0-flash-exp"]
+            return ["models/gemini-1.5-flash", "models/gemini-1.5-pro"]
 
     def generate(self, prompt, model_name="models/gemini-1.5-flash"):
-        if not self.client:
-            raise ValueError("API Key is missing.")
-        
-        # Fix: Do NOT strip 'models/' prefix. Use exact string from API.
-        
+        if not self.client: raise ValueError("API Key is missing.")
         try:
-            # Explicitly using the new SDK method
-            response = self.client.models.generate_content(
-                model=model_name,
-                contents=prompt
-            )
+            response = self.client.models.generate_content(model=model_name, contents=prompt)
             return response.text.strip()
         except Exception as e:
-            # Re-raise with context
             raise Exception(f"Gemini API Error ({model_name}): {str(e)}")
 
     def test_connection(self, model_name="models/gemini-1.5-flash"):
@@ -80,16 +67,25 @@ class GeminiClient:
 
 class PushAgentApp(ctk.CTk):
     def __init__(self, start_path=None):
-        super().__init__()
-        
+        # 1. Single Instance Check
+        self.ipc_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            self.ipc_socket.bind(('127.0.0.1', IPC_PORT))
+            self.ipc_socket.listen(1)
+            # We are the main instance
+            super().__init__()
+            threading.Thread(target=self.ipc_listener, daemon=True).start()
+        except OSError:
+            # Port busy -> Another instance running
+            self.send_to_existing_instance(start_path)
+            sys.exit(0)
+
         self.title("GitHub Push Agent (AI Powered)")
         self.geometry("650x850")
         
-        self.working_dir = start_path
         self.api_key = ""
         self.repo_list = []
         self.is_running = False
-        # Fix: Default model must include 'models/' prefix
         self.available_models = ["models/gemini-1.5-flash"] 
 
         # Load API Key
@@ -102,17 +98,15 @@ class PushAgentApp(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # Tabs
         self.main_tabs = ctk.CTkTabview(self)
         self.main_tabs.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
         self.tab_main = self.main_tabs.add("Main")
         self.tab_settings = self.main_tabs.add("Settings")
 
-        # Setup
+        # Setup Tabs (UI must exist before we update fields)
         self.setup_settings_tab()
         self.setup_main_tab()
         
-        # Log
         self.frame_log = ctk.CTkFrame(self)
         self.frame_log.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="ew")
         self.frame_log.grid_columnconfigure(0, weight=1)
@@ -124,19 +118,142 @@ class PushAgentApp(ctk.CTk):
         self.textbox_log.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
         self.textbox_log.configure(state="disabled")
 
-        # Init Logic
-        if self.working_dir and os.path.exists(self.working_dir):
+        # 2. Path Detection Logic
+        detected_path = None
+        
+        # Priority A: Command line arg
+        if start_path and os.path.isdir(start_path):
+             detected_path = start_path
+             self.log(f"Startup: Using provided path: {detected_path}")
+        
+        # Priority B: Active Explorer Window
+        if not detected_path:
+             detected_path = self.get_active_explorer_path()
+             if detected_path:
+                 self.log(f"Startup: Detected active Explorer folder: {detected_path}")
+        
+        # Priority C: Fallback to CWD
+        if not detected_path:
+             detected_path = os.getcwd()
+             self.log(f"Startup: No Explorer context found. Fallback to: {detected_path}")
+
+        self.working_dir = detected_path
+        
+        # Apply State
+        if self.working_dir:
             self.path_var.set(self.working_dir)
             self.detect_git_state()
-        elif not self.working_dir:
-            cwd = os.getcwd()
-            self.working_dir = cwd
-            self.path_var.set(cwd)
-            self.detect_git_state()
+            self.reset_session_state()
 
         threading.Thread(target=self.fetch_repos, daemon=True).start()
         if self.api_key:
             threading.Thread(target=self.refresh_models, daemon=True).start()
+
+    # --- Session Management ---
+
+    def reset_session_state(self):
+        """Resets the Main tab inputs to default for a fresh session."""
+        try:
+            # 1. Repo Name: Keep what detect_git_state set, or reset if needed
+            # We don't wipe it blank because detect_git_state populates a smart default.
+            
+            # 2. Privacy
+            self.privacy_var.set("private")
+            
+            # 3. Commit
+            self.commit_mode_var.set(False)
+            self.toggle_commit_input()
+            self.entry_commit.delete(0, "end")
+            self.entry_commit.insert(0, "Update")
+            
+            # 4. README
+            self.readme_mode_var.set("Do nothing")
+            
+            self.log("Session UI reset to defaults.")
+        except Exception as e:
+            self.log(f"Error resetting session: {e}")
+
+    # --- Single Instance & IPC ---
+
+    def send_to_existing_instance(self, path):
+        try:
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.connect(('127.0.0.1', IPC_PORT))
+            msg = path if path else "DETECT"
+            client.sendall(msg.encode('utf-8'))
+            client.close()
+        except Exception as e:
+            print(f"IPC Error: {e}")
+
+    def ipc_listener(self):
+        while True:
+            try:
+                conn, addr = self.ipc_socket.accept()
+                data = conn.recv(1024).decode('utf-8').strip()
+                conn.close()
+                self.after(0, lambda: self.handle_ipc_message(data))
+            except Exception as e:
+                print(f"IPC Listener Error: {e}")
+
+    def handle_ipc_message(self, data):
+        self.log(f"Received signal: {data}")
+        self.bring_to_front()
+        
+        new_path = None
+        if data == "DETECT":
+            new_path = self.get_active_explorer_path()
+            if new_path:
+                self.log(f"Auto-detected active folder: {new_path}")
+            else:
+                self.log("Explorer detection failed during sync.")
+        elif data and os.path.exists(data):
+            new_path = data
+            self.log(f"Received path argument: {new_path}")
+            
+        if new_path:
+            self.working_dir = new_path
+            self.path_var.set(new_path)
+            self.detect_git_state()
+            self.reset_session_state() # Reset UI on switch
+
+    def bring_to_front(self):
+        try:
+            hwnd = win32gui.GetForegroundWindow()
+            def callback(hwnd, extra):
+                if "GitHub Push Agent" in win32gui.GetWindowText(hwnd):
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                    win32gui.SetForegroundWindow(hwnd)
+            win32gui.EnumWindows(callback, None)
+        except Exception as e:
+            self.log(f"Focus error: {e}")
+            self.lift()
+            self.focus_force()
+
+    def get_active_explorer_path(self):
+        try:
+            shell = win32com.client.Dispatch("Shell.Application")
+            foreground_hwnd = win32gui.GetForegroundWindow()
+            
+            # 1. Try to match foreground window
+            for window in shell.Windows():
+                try:
+                    if window.HWND == foreground_hwnd:
+                        path = window.Document.Folder.Self.Path
+                        return path
+                except: continue
+
+            # 2. Heuristic: Return the first valid file system window found
+            # (Use this cautiously, but user requested 'active' logic.
+            # If foreground check fails, maybe don't return random window to avoid confusion?)
+            # Reverting to safer behavior: Only return if we are fairly sure.
+            # But the user said "detect the currently active File Explorer folder path".
+            # If the foreground window is NOT Explorer, we shouldn't guess.
+            
+            return None 
+                    
+        except Exception as e:
+            self.log(f"Explorer detection error: {e}")
+        return None
 
     # --- UI Setup ---
 
@@ -177,7 +294,9 @@ class PushAgentApp(ctk.CTk):
         self.path_var = ctk.StringVar(value="Not Selected")
         self.entry_path = ctk.CTkEntry(frame_path, textvariable=self.path_var, width=300, state="readonly")
         self.entry_path.pack(side="left", fill="x", expand=True, padx=5, pady=10)
-        ctk.CTkButton(frame_path, text="Browse", width=80, command=self.browse_folder).pack(side="left", padx=10)
+        
+        ctk.CTkButton(frame_path, text="Browse", width=60, command=self.browse_folder).pack(side="left", padx=5)
+        ctk.CTkButton(frame_path, text="🔄 Sync", width=60, fg_color="#555555", hover_color="#666666", command=self.manual_sync_folder).pack(side="left", padx=5)
 
         # Repos
         self.repo_tabs = ctk.CTkTabview(self.tab_main, height=150)
@@ -314,6 +433,20 @@ class PushAgentApp(ctk.CTk):
             self.working_dir = path
             self.path_var.set(path)
             self.detect_git_state()
+            self.reset_session_state()
+
+    def manual_sync_folder(self):
+        self.log("Syncing with active Explorer window...")
+        path = self.get_active_explorer_path()
+        if path:
+            self.working_dir = path
+            self.path_var.set(path)
+            self.detect_git_state()
+            self.reset_session_state()
+            self.log(f"Synced: {path}")
+        else:
+            self.log("No active Explorer window found.")
+            messagebox.showinfo("Info", "Could not detect an active File Explorer window.")
 
     def detect_git_state(self):
         if not self.working_dir: return
