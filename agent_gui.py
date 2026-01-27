@@ -17,6 +17,9 @@ import win32con
 from google import genai
 from google.genai import types
 
+
+#testing the Agent is good ides dont steal it
+
 # Configuration
 APP_NAME = "PushAgent"
 KEYRING_SERVICE = "PushAgent_GeminiAPI"
