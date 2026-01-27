@@ -63,5 +63,3 @@ The agent will initialize git, add files, commit, create the remote repo (if nee
 
 Pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change.
 
----
-*Powered by Google Gemini*
