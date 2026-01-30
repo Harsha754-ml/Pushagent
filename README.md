@@ -194,5 +194,5 @@ This project is licensed under the **MIT License** - see the LICENSE file for de
 
 ---
 
-**Made with ❤️ for developers who just want to code**
+**Made with ❤️ by HarsH for developers who just want to code**
 
