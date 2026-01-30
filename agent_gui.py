@@ -17,9 +17,6 @@ import win32con
 from google import genai
 from google.genai import types
 
-
-#testing the Agent is good ides dont steal it
-
 # Configuration
 APP_NAME = "PushAgent"
 KEYRING_SERVICE = "PushAgent_GeminiAPI"
@@ -83,8 +80,9 @@ class PushAgentApp(ctk.CTk):
             self.send_to_existing_instance(start_path)
             sys.exit(0)
 
-        self.title("GitHub Push Agent (AI Powered)")
-        self.geometry("650x850")
+        self.title("GitHub Push Agent - AI Powered")
+        self.geometry("750x900")
+        self.minsize(700, 800)
         
         self.api_key = ""
         self.repo_list = []
@@ -261,96 +259,97 @@ class PushAgentApp(ctk.CTk):
     # --- UI Setup ---
 
     def setup_settings_tab(self):
-        frame = ctk.CTkFrame(self.tab_settings)
+        frame = ctk.CTkFrame(self.tab_settings, corner_radius=10)
         frame.pack(fill="both", expand=True, padx=20, pady=20)
         
-        ctk.CTkLabel(frame, text="Gemini API Configuration", font=("Segoe UI", 16, "bold")).pack(pady=(10, 20))
+        header = ctk.CTkLabel(frame, text="🔑 Gemini API Configuration", font=("Segoe UI", 18, "bold"))
+        header.pack(pady=(15, 25), padx=20)
         
-        ctk.CTkLabel(frame, text="API Key:").pack(anchor="w", padx=20)
-        self.entry_api = ctk.CTkEntry(frame, width=400, show="*")
-        self.entry_api.pack(pady=5, padx=20)
+        ctk.CTkLabel(frame, text="API Key:", font=("Segoe UI", 12)).pack(anchor="w", padx=20)
+        self.entry_api = ctk.CTkEntry(frame, width=400, show="*", height=40)
+        self.entry_api.pack(pady=10, padx=20)
         if self.api_key: self.entry_api.insert(0, self.api_key)
             
         self.show_key_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(frame, text="Show Key", variable=self.show_key_var, command=self.toggle_show_key).pack(anchor="w", padx=20, pady=5)
         
-        ctk.CTkButton(frame, text="Save & Fetch Models", command=self.save_api_key).pack(pady=10)
+        ctk.CTkButton(frame, text="💾 Save & Fetch Models", command=self.save_api_key, height=40, font=("Segoe UI", 12)).pack(pady=15, padx=20, fill="x")
 
-        ctk.CTkLabel(frame, text="Select Model:").pack(anchor="w", padx=20, pady=(10, 0))
-        self.combo_models = ctk.CTkComboBox(frame, values=self.available_models, width=400)
-        self.combo_models.pack(pady=5, padx=20)
+        ctk.CTkLabel(frame, text="Select Model:", font=("Segoe UI", 12)).pack(anchor="w", padx=20, pady=(15, 0))
+        self.combo_models = ctk.CTkComboBox(frame, values=self.available_models, width=400, height=40)
+        self.combo_models.pack(pady=10, padx=20, fill="x")
         self.combo_models.set("models/gemini-1.5-flash")
         
-        ctk.CTkButton(frame, text="Refresh Models", width=100, command=lambda: threading.Thread(target=self.refresh_models, daemon=True).start()).pack(pady=5)
+        ctk.CTkButton(frame, text="🔄 Refresh Models", command=lambda: threading.Thread(target=self.refresh_models, daemon=True).start(), height=40, font=("Segoe UI", 11)).pack(pady=10, padx=20, fill="x")
         
-        self.btn_test = ctk.CTkButton(frame, text="Test Selected Model", fg_color="transparent", border_width=2, text_color=("gray10", "#DCE4EE"), command=self.test_api_key)
-        self.btn_test.pack(pady=20)
+        self.btn_test = ctk.CTkButton(frame, text="✓ Test Selected Model", command=self.test_api_key, height=45, font=("Segoe UI", 12), fg_color="#1f6feb", hover_color="#388bfd")
+        self.btn_test.pack(pady=20, padx=20, fill="x")
 
     def setup_main_tab(self):
         self.tab_main.grid_columnconfigure(0, weight=1)
         
         # Path
-        frame_path = ctk.CTkFrame(self.tab_main)
-        frame_path.pack(fill="x", padx=10, pady=10)
+        frame_path = ctk.CTkFrame(self.tab_main, corner_radius=10)
+        frame_path.pack(fill="x", padx=15, pady=12)
         
-        ctk.CTkLabel(frame_path, text="Project Folder:").pack(side="left", padx=10)
+        ctk.CTkLabel(frame_path, text="📁 Project Folder:", font=("Segoe UI", 12, "bold")).pack(side="left", padx=15, pady=12)
         self.path_var = ctk.StringVar(value="Not Selected")
-        self.entry_path = ctk.CTkEntry(frame_path, textvariable=self.path_var, width=300, state="readonly")
-        self.entry_path.pack(side="left", fill="x", expand=True, padx=5, pady=10)
+        self.entry_path = ctk.CTkEntry(frame_path, textvariable=self.path_var, width=300, state="readonly", height=38)
+        self.entry_path.pack(side="left", fill="x", expand=True, padx=10, pady=12)
         
-        ctk.CTkButton(frame_path, text="Browse", width=60, command=self.browse_folder).pack(side="left", padx=5)
-        ctk.CTkButton(frame_path, text="🔄 Sync", width=60, fg_color="#555555", hover_color="#666666", command=self.manual_sync_folder).pack(side="left", padx=5)
+        ctk.CTkButton(frame_path, text="Browse", width=70, height=38, command=self.browse_folder).pack(side="left", padx=5)
+        ctk.CTkButton(frame_path, text="🔄 Sync", width=70, height=38, fg_color="#555555", hover_color="#666666", command=self.manual_sync_folder).pack(side="left", padx=5)
 
         # Repos
-        self.repo_tabs = ctk.CTkTabview(self.tab_main, height=150)
-        self.repo_tabs.pack(fill="x", padx=10, pady=5)
+        self.repo_tabs = ctk.CTkTabview(self.tab_main, height=150, corner_radius=10)
+        self.repo_tabs.pack(fill="x", padx=15, pady=12)
         self.tab_exist = self.repo_tabs.add("Existing Remote")
         self.tab_new = self.repo_tabs.add("Create New Remote")
         
-        ctk.CTkLabel(self.tab_exist, text="Select GitHub Repository:").pack(pady=5)
-        self.combo_repos = ctk.CTkComboBox(self.tab_exist, values=["Loading..."], width=300)
-        self.combo_repos.pack(pady=10)
+        ctk.CTkLabel(self.tab_exist, text="🔗 Select GitHub Repository:", font=("Segoe UI", 11, "bold")).pack(pady=12)
+        self.combo_repos = ctk.CTkComboBox(self.tab_exist, values=["Loading..."], width=300, height=38)
+        self.combo_repos.pack(pady=10, padx=15)
         
         frame_new = ctk.CTkFrame(self.tab_new, fg_color="transparent")
-        frame_new.pack(pady=10)
-        self.entry_repo_name = ctk.CTkEntry(frame_new, placeholder_text="Repository Name", width=250)
+        frame_new.pack(pady=15, padx=15)
+        self.entry_repo_name = ctk.CTkEntry(frame_new, placeholder_text="Repository Name", width=250, height=38)
         self.entry_repo_name.pack(side="left", padx=10)
         
         self.privacy_var = ctk.StringVar(value="private")
-        ctk.CTkRadioButton(frame_new, text="Private", variable=self.privacy_var, value="private").pack(side="left", padx=10)
-        ctk.CTkRadioButton(frame_new, text="Public", variable=self.privacy_var, value="public").pack(side="left", padx=10)
+        ctk.CTkRadioButton(frame_new, text="🔒 Private", variable=self.privacy_var, value="private").pack(side="left", padx=10)
+        ctk.CTkRadioButton(frame_new, text="🌐 Public", variable=self.privacy_var, value="public").pack(side="left", padx=10)
 
         # Commit
-        frame_commit = ctk.CTkFrame(self.tab_main)
-        frame_commit.pack(fill="x", padx=10, pady=10)
+        frame_commit = ctk.CTkFrame(self.tab_main, corner_radius=10)
+        frame_commit.pack(fill="x", padx=15, pady=12)
         
         row1 = ctk.CTkFrame(frame_commit, fg_color="transparent")
-        row1.pack(fill="x", padx=10, pady=5)
-        ctk.CTkLabel(row1, text="Commit Message", font=("Segoe UI", 12, "bold")).pack(side="left")
+        row1.pack(fill="x", padx=15, pady=(12, 5))
+        ctk.CTkLabel(row1, text="💬 Commit Message", font=("Segoe UI", 12, "bold")).pack(side="left")
         
         self.commit_mode_var = ctk.BooleanVar(value=False)
-        self.check_ai_commit = ctk.CTkCheckBox(row1, text="Generate with Gemini", variable=self.commit_mode_var, command=self.toggle_commit_input)
+        self.check_ai_commit = ctk.CTkCheckBox(row1, text="✨ Generate with Gemini", variable=self.commit_mode_var, command=self.toggle_commit_input)
         self.check_ai_commit.pack(side="right")
         
-        self.entry_commit = ctk.CTkEntry(frame_commit, placeholder_text="Enter commit message...")
-        self.entry_commit.pack(fill="x", padx=10, pady=(0, 10))
+        self.entry_commit = ctk.CTkEntry(frame_commit, placeholder_text="Enter commit message...", height=38)
+        self.entry_commit.pack(fill="x", padx=15, pady=(5, 12))
         self.entry_commit.insert(0, "Update")
 
         # Readme
-        frame_readme = ctk.CTkFrame(self.tab_main)
-        frame_readme.pack(fill="x", padx=10, pady=5)
+        frame_readme = ctk.CTkFrame(self.tab_main, corner_radius=10)
+        frame_readme.pack(fill="x", padx=15, pady=12)
         
         row2 = ctk.CTkFrame(frame_readme, fg_color="transparent")
-        row2.pack(fill="x", padx=10, pady=5)
-        ctk.CTkLabel(row2, text="README.md", font=("Segoe UI", 12, "bold")).pack(side="left")
+        row2.pack(fill="x", padx=15, pady=(12, 5))
+        ctk.CTkLabel(row2, text="📄 README.md", font=("Segoe UI", 12, "bold")).pack(side="left")
         
         self.readme_mode_var = ctk.StringVar(value="Do nothing")
-        self.opt_readme = ctk.CTkOptionMenu(row2, variable=self.readme_mode_var, values=["Do nothing", "Create Minimal", "Generate with Gemini"])
-        self.opt_readme.pack(side="right")
+        self.opt_readme = ctk.CTkOptionMenu(row2, variable=self.readme_mode_var, values=["Do nothing", "Create Minimal", "Generate with Gemini"], height=36)
+        self.opt_readme.pack(side="right", padx=15, pady=(5, 12))
 
         # Push
-        self.btn_push = ctk.CTkButton(self.tab_main, text="Push to GitHub", height=50, font=("Segoe UI", 16, "bold"), fg_color="#2EA44F", hover_color="#2C974B", command=self.on_push)
-        self.btn_push.pack(fill="x", padx=10, pady=20)
+        self.btn_push = ctk.CTkButton(self.tab_main, text="🚀 Push to GitHub", height=55, font=("Segoe UI", 14, "bold"), fg_color="#2EA44F", hover_color="#2C974B", command=self.on_push)
+        self.btn_push.pack(fill="x", padx=15, pady=20)
 
     # --- Logic ---
 
