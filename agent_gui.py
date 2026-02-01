@@ -680,7 +680,22 @@ class PushAgentApp(ctk.CTk):
                     self.run_cmd(["git", "remote", "add", "origin", url], cwd=cwd)
 
             self.log("Pushing to origin...")
-            self.run_cmd(["git", "push", "-u", "origin", "main"], cwd=cwd)
+            try:
+                self.run_cmd(["git", "push", "-u", "origin", "main"], cwd=cwd)
+            except Exception as e:
+                err_str = str(e).lower()
+                if "rejected" in err_str or "fetch first" in err_str:
+                    self.log("Push rejected. Attempting to pull and rebase...")
+                    try:
+                        self.run_cmd(["git", "pull", "--rebase", "origin", "main"], cwd=cwd)
+                        self.log("Rebase successful. Retrying push...")
+                        self.run_cmd(["git", "push", "-u", "origin", "main"], cwd=cwd)
+                    except Exception as rebase_err:
+                        self.log("Auto-rebase failed (possible conflicts). Aborting rebase.")
+                        self.run_cmd(["git", "rebase", "--abort"], cwd=cwd, ignore_error=True)
+                        raise Exception("Git Push Failed: Remote changes conflict with local. Please pull/merge manually.")
+                else:
+                    raise e
             
             repo_url = self.run_cmd(["git", "remote", "get-url", "origin"], cwd=cwd)
             self.log("Done!")
