@@ -433,6 +433,9 @@ class PushAgentApp(ctk.CTk):
                     if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
                         self.log(f"API Test Failed: Quota exceeded for {model}. Please wait or try 'gemini-1.5-flash'.")
                         messagebox.showwarning("Quota Exceeded", f"The model {model} has reached its limit.\n\nTry switching to 'gemini-1.5-flash' in Settings.")
+                    elif "PERMISSION_DENIED" in msg or "leaked" in msg or "API key not valid" in msg:
+                        self.log(f"API Test Failed: Invalid or Leaked Key.")
+                        messagebox.showerror("API Key Error", "Your API Key is invalid or has been flagged as leaked by Google.\n\nPlease generate a new key at aistudio.google.com.")
                     else:
                         self.log(f"API Test Failed:\n{msg}")
                         messagebox.showerror("Failed", "Connection failed. Check logs for details.")
@@ -530,12 +533,13 @@ class PushAgentApp(ctk.CTk):
                 raise Exception(err)
             return None
 
-    def get_file_tree(self):
+    def get_file_tree(self, root_path=None):
+        target = root_path if root_path else self.working_dir
         ignore_dirs = {'.git', 'node_modules', '.venv', 'build', 'dist', '__pycache__', '.idea', '.vscode'}
         tree = []
-        for root, dirs, files in os.walk(self.working_dir):
+        for root, dirs, files in os.walk(target):
             dirs[:] = [d for d in dirs if d not in ignore_dirs]
-            level = root.replace(self.working_dir, '').count(os.sep)
+            level = root.replace(target, '').count(os.sep)
             indent = '  ' * level
             tree.append(f"{indent}{os.path.basename(root)}/")
             for f in files[:8]: 
@@ -550,6 +554,8 @@ class PushAgentApp(ctk.CTk):
         
         # Gather data on Main Thread
         data = {
+            "working_dir": self.working_dir,
+            "api_key": self.api_key,
             "use_ai_commit": self.commit_mode_var.get(),
             "use_ai_readme": self.readme_mode_var.get() == "Generate with Gemini",
             "model_name": self.combo_models.get(),
@@ -567,33 +573,35 @@ class PushAgentApp(ctk.CTk):
 
     def run_push_workflow(self, data):
         try:
+            cwd = data["working_dir"]
+            api_key = data["api_key"]
             use_ai_commit = data["use_ai_commit"]
             use_ai_readme = data["use_ai_readme"]
             model_name = data["model_name"]
             
-            if (use_ai_commit or use_ai_readme) and not self.api_key:
+            if (use_ai_commit or use_ai_readme) and not api_key:
                 raise Exception("Gemini API Key is missing. Go to Settings tab.")
 
-            client = GeminiClient(self.api_key) if (use_ai_commit or use_ai_readme) else None
+            client = GeminiClient(api_key) if (use_ai_commit or use_ai_readme) else None
 
-            if not os.path.isdir(os.path.join(self.working_dir, ".git")):
-                self.run_cmd(["git", "init", "-b", "main"])
+            if not os.path.isdir(os.path.join(cwd, ".git")):
+                self.run_cmd(["git", "init", "-b", "main"], cwd=cwd)
 
-            gitignore = os.path.join(self.working_dir, ".gitignore")
+            gitignore = os.path.join(cwd, ".gitignore")
             if not os.path.exists(gitignore):
                 self.log("Creating default .gitignore")
                 with open(gitignore, "w") as f:
                     f.write("__pycache__/\n*.pyc\nnode_modules/\n.env\ndist/\n.DS_Store\n")
 
-            self.run_cmd(["git", "add", "."])
+            self.run_cmd(["git", "add", "."], cwd=cwd)
             
-            status = self.run_cmd(["git", "status", "--porcelain"])
+            status = self.run_cmd(["git", "status", "--porcelain"], cwd=cwd)
             
             if status:
                 msg = data["commit_msg_input"]
                 if use_ai_commit:
                     self.log(f"Gemini ({model_name}): Generating commit message...")
-                    diff = self.run_cmd(["git", "diff", "--staged", "--stat"])
+                    diff = self.run_cmd(["git", "diff", "--staged", "--stat"], cwd=cwd)
                     if not diff: diff = "New files added."
                     
                     prompt = f"Write a concise git commit message (under 60 chars) for this diff:\n{diff}"
@@ -601,11 +609,11 @@ class PushAgentApp(ctk.CTk):
                     self.log(f"Generated: {msg}")
                 
                 if not msg: msg = "Update"
-                self.run_cmd(["git", "commit", "-m", msg])
+                self.run_cmd(["git", "commit", "-m", msg], cwd=cwd)
             else:
                 self.log("Working tree clean (nothing to commit).")
 
-            readme_path = os.path.join(self.working_dir, "README.md")
+            readme_path = os.path.join(cwd, "README.md")
             readme_opt = data["readme_opt"]
             
             if readme_opt != "Do nothing":
@@ -617,11 +625,11 @@ class PushAgentApp(ctk.CTk):
                 if should_create:
                     content = ""
                     if readme_opt == "Create Minimal":
-                        name = os.path.basename(self.working_dir)
+                        name = os.path.basename(cwd)
                         content = f"# {name}"
                     elif readme_opt == "Generate with Gemini":
                         self.log(f"Gemini ({model_name}): Generating README...")
-                        tree = self.get_file_tree()
+                        tree = self.get_file_tree(root_path=cwd)
                         prompt = f"Create a professional README.md for a project with this file structure:\n{tree}\n\nKeep it concise."
                         content = client.generate(prompt, model_name=model_name)
                     
@@ -632,8 +640,8 @@ class PushAgentApp(ctk.CTk):
                         f.write(content)
                     self.log("README.md created.")
                     
-                    self.run_cmd(["git", "add", "README.md"])
-                    self.run_cmd(["git", "commit", "-m", "Add README"])
+                    self.run_cmd(["git", "add", "README.md"], cwd=cwd)
+                    self.run_cmd(["git", "commit", "-m", "Add README"], cwd=cwd)
 
             repo_url = ""
             current_tab = data["repo_tab"]
@@ -647,15 +655,15 @@ class PushAgentApp(ctk.CTk):
                 
                 if not exists:
                     self.log(f"Creating remote repo: {repo_name}...")
-                    self.run_cmd(["gh", "repo", "create", repo_name, visibility, "--source=.", "--remote=origin"])
+                    self.run_cmd(["gh", "repo", "create", repo_name, visibility, "--source=.", "--remote=origin"], cwd=cwd)
                 else:
                     self.log(f"Repo {repo_name} already exists. Linking...")
-                    remotes = self.run_cmd(["git", "remote"], ignore_error=True) or ""
+                    remotes = self.run_cmd(["git", "remote"], cwd=cwd, ignore_error=True) or ""
                     if "origin" not in remotes:
                         try:
                             login = subprocess.check_output(["gh", "api", "user", "--jq", ".login"], creationflags=subprocess.CREATE_NO_WINDOW).decode().strip()
                             url = f"https://github.com/{login}/{repo_name}.git"
-                            self.run_cmd(["git", "remote", "add", "origin", url])
+                            self.run_cmd(["git", "remote", "add", "origin", url], cwd=cwd)
                         except:
                             raise Exception("Could not determine repo URL. Is 'gh' logged in?")
             
@@ -665,16 +673,16 @@ class PushAgentApp(ctk.CTk):
                 if not match: raise Exception(f"Selected repo '{selected}' not found in list.")
                 url = match['url']
                 
-                remotes = self.run_cmd(["git", "remote"], ignore_error=True) or ""
+                remotes = self.run_cmd(["git", "remote"], cwd=cwd, ignore_error=True) or ""
                 if "origin" in remotes:
-                    self.run_cmd(["git", "remote", "set-url", "origin", url])
+                    self.run_cmd(["git", "remote", "set-url", "origin", url], cwd=cwd)
                 else:
-                    self.run_cmd(["git", "remote", "add", "origin", url])
+                    self.run_cmd(["git", "remote", "add", "origin", url], cwd=cwd)
 
             self.log("Pushing to origin...")
-            self.run_cmd(["git", "push", "-u", "origin", "main"])
+            self.run_cmd(["git", "push", "-u", "origin", "main"], cwd=cwd)
             
-            repo_url = self.run_cmd(["git", "remote", "get-url", "origin"])
+            repo_url = self.run_cmd(["git", "remote", "get-url", "origin"], cwd=cwd)
             self.log("Done!")
             self.after(0, lambda: self.show_success(repo_url))
 
