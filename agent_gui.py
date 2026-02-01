@@ -76,9 +76,13 @@ class PushAgentApp(ctk.CTk):
             super().__init__()
             threading.Thread(target=self.ipc_listener, daemon=True).start()
         except OSError:
-            # Port busy -> Another instance running
-            self.send_to_existing_instance(start_path)
-            sys.exit(0)
+            # Port busy -> Check if valid instance or zombie
+            if self.send_to_existing_instance(start_path):
+                sys.exit(0) # Valid instance found
+            else:
+                # Zombie port (busy but not listening). Start without IPC.
+                print("Warning: IPC Port busy but no response. Single-instance mode disabled.")
+                super().__init__()
 
         self.title("GitHub Push Agent - AI Powered")
         self.geometry("750x900")
@@ -183,8 +187,10 @@ class PushAgentApp(ctk.CTk):
             msg = path if path else "DETECT"
             client.sendall(msg.encode('utf-8'))
             client.close()
+            return True
         except Exception as e:
             print(f"IPC Error: {e}")
+            return False
 
     def ipc_listener(self):
         while True:
@@ -354,11 +360,12 @@ class PushAgentApp(ctk.CTk):
     # --- Logic ---
 
     def log(self, message):
-        self.textbox_log.configure(state="normal")
-        self.textbox_log.insert("end", f"> {message}\n")
-        self.textbox_log.see("end")
-        self.textbox_log.configure(state="disabled")
-        self.update_idletasks()
+        def _update_ui():
+            self.textbox_log.configure(state="normal")
+            self.textbox_log.insert("end", f"> {message}\n")
+            self.textbox_log.see("end")
+            self.textbox_log.configure(state="disabled")
+        self.after(0, _update_ui)
 
     def toggle_show_key(self):
         if self.show_key_var.get():
@@ -388,17 +395,19 @@ class PushAgentApp(ctk.CTk):
         models = client.list_models()
         if models:
             self.available_models = models
-            self.combo_models.configure(values=models)
             
-            # Smart Default: Prefer 1.5-flash as it has the best quota limits
-            curr = self.combo_models.get()
-            if curr not in models:
-                preferred = "models/gemini-1.5-flash"
-                if preferred in models:
-                    self.combo_models.set(preferred)
-                else:
-                    self.combo_models.set(models[0])
-            self.log(f"Models loaded: {len(models)} found. Selected: {self.combo_models.get()}")
+            def _update():
+                self.combo_models.configure(values=models)
+                # Smart Default: Prefer 1.5-flash as it has the best quota limits
+                curr = self.combo_models.get()
+                if curr not in models:
+                    preferred = "models/gemini-1.5-flash"
+                    if preferred in models:
+                        self.combo_models.set(preferred)
+                    else:
+                        self.combo_models.set(models[0])
+                self.log(f"Models loaded: {len(models)} found. Selected: {self.combo_models.get()}")
+            self.after(0, _update)
         else:
             self.log("Failed to list models. Using fallback defaults.")
 
@@ -415,17 +424,21 @@ class PushAgentApp(ctk.CTk):
         def run_test():
             client = GeminiClient(key)
             success, msg = client.test_connection(model_name=model)
-            if success:
-                self.log(f"API Test Passed. Model '{model}' is responding.")
-                messagebox.showinfo("Success", f"Connected to {model} successfully!")
-            else:
-                if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
-                    self.log(f"API Test Failed: Quota exceeded for {model}. Please wait or try 'gemini-1.5-flash'.")
-                    messagebox.showwarning("Quota Exceeded", f"The model {model} has reached its limit.\n\nTry switching to 'gemini-1.5-flash' in Settings.")
+            
+            def _update():
+                if success:
+                    self.log(f"API Test Passed. Model '{model}' is responding.")
+                    messagebox.showinfo("Success", f"Connected to {model} successfully!")
                 else:
-                    self.log(f"API Test Failed:\n{msg}")
-                    messagebox.showerror("Failed", "Connection failed. Check logs for details.")
-            self.btn_test.configure(state="normal", text="Test Selected Model")
+                    if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+                        self.log(f"API Test Failed: Quota exceeded for {model}. Please wait or try 'gemini-1.5-flash'.")
+                        messagebox.showwarning("Quota Exceeded", f"The model {model} has reached its limit.\n\nTry switching to 'gemini-1.5-flash' in Settings.")
+                    else:
+                        self.log(f"API Test Failed:\n{msg}")
+                        messagebox.showerror("Failed", "Connection failed. Check logs for details.")
+                self.btn_test.configure(state="normal", text="Test Selected Model")
+            
+            self.after(0, _update)
             
         threading.Thread(target=run_test, daemon=True).start()
 
@@ -479,18 +492,37 @@ class PushAgentApp(ctk.CTk):
                 data = json.loads(res.stdout)
                 self.repo_list = data
                 names = [r['name'] for r in data]
-                self.combo_repos.configure(values=names)
-                if names: self.combo_repos.set(names[0])
+                
+                def _update():
+                    self.combo_repos.configure(values=names)
+                    if names: self.combo_repos.set(names[0])
+                self.after(0, _update)
             else:
                 self.log("Warning: Could not fetch repos. Ensure 'gh' CLI is installed.")
         except Exception as e:
             self.log(f"Repo fetch error: {e}")
 
-    def run_cmd(self, args, ignore_error=False):
+    def run_cmd(self, args, cwd=None, ignore_error=False):
+        target_dir = cwd if cwd else self.working_dir
         self.log(f"Exec: {' '.join(args)}")
         try:
-            res = subprocess.run(args, cwd=self.working_dir, capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            env = os.environ.copy()
+            env["GIT_TERMINAL_PROMPT"] = "0"
+            res = subprocess.run(
+                args, 
+                cwd=target_dir, 
+                capture_output=True, 
+                text=True, 
+                check=True, 
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                env=env,
+                timeout=300
+            )
             return res.stdout.strip()
+        except subprocess.TimeoutExpired:
+            self.log("CMD TIMEOUT")
+            if not ignore_error: raise Exception("Command timed out")
+            return None
         except subprocess.CalledProcessError as e:
             err = e.stderr.strip() or e.stdout.strip()
             if not ignore_error:
@@ -515,16 +547,30 @@ class PushAgentApp(ctk.CTk):
             messagebox.showerror("Error", "Please select a project folder first.")
             return
         if self.is_running: return
+        
+        # Gather data on Main Thread
+        data = {
+            "use_ai_commit": self.commit_mode_var.get(),
+            "use_ai_readme": self.readme_mode_var.get() == "Generate with Gemini",
+            "model_name": self.combo_models.get(),
+            "commit_msg_input": self.entry_commit.get(),
+            "readme_opt": self.readme_mode_var.get(),
+            "repo_tab": self.repo_tabs.get(),
+            "repo_name": self.entry_repo_name.get().strip(),
+            "privacy": self.privacy_var.get(),
+            "selected_repo": self.combo_repos.get()
+        }
+
         self.is_running = True
         self.btn_push.configure(state="disabled", text="Processing...")
-        threading.Thread(target=self.run_push_workflow, daemon=True).start()
+        threading.Thread(target=self.run_push_workflow, args=(data,), daemon=True).start()
 
-    def run_push_workflow(self):
+    def run_push_workflow(self, data):
         try:
-            use_ai_commit = self.commit_mode_var.get()
-            use_ai_readme = self.readme_mode_var.get() == "Generate with Gemini"
-            model_name = self.combo_models.get()
-
+            use_ai_commit = data["use_ai_commit"]
+            use_ai_readme = data["use_ai_readme"]
+            model_name = data["model_name"]
+            
             if (use_ai_commit or use_ai_readme) and not self.api_key:
                 raise Exception("Gemini API Key is missing. Go to Settings tab.")
 
@@ -544,7 +590,7 @@ class PushAgentApp(ctk.CTk):
             status = self.run_cmd(["git", "status", "--porcelain"])
             
             if status:
-                msg = self.entry_commit.get()
+                msg = data["commit_msg_input"]
                 if use_ai_commit:
                     self.log(f"Gemini ({model_name}): Generating commit message...")
                     diff = self.run_cmd(["git", "diff", "--staged", "--stat"])
@@ -560,7 +606,7 @@ class PushAgentApp(ctk.CTk):
                 self.log("Working tree clean (nothing to commit).")
 
             readme_path = os.path.join(self.working_dir, "README.md")
-            readme_opt = self.readme_mode_var.get()
+            readme_opt = data["readme_opt"]
             
             if readme_opt != "Do nothing":
                 should_create = False
@@ -590,12 +636,12 @@ class PushAgentApp(ctk.CTk):
                     self.run_cmd(["git", "commit", "-m", "Add README"])
 
             repo_url = ""
-            current_tab = self.repo_tabs.get()
+            current_tab = data["repo_tab"]
             
             if current_tab == "Create New Remote":
-                repo_name = self.entry_repo_name.get().strip()
+                repo_name = data["repo_name"]
                 if not repo_name: raise Exception("Repository name is required.")
-                visibility = f"--{self.privacy_var.get()}"
+                visibility = f"--{data['privacy']}"
                 
                 exists = subprocess.run(["gh", "repo", "view", repo_name], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW).returncode == 0
                 
@@ -614,7 +660,7 @@ class PushAgentApp(ctk.CTk):
                             raise Exception("Could not determine repo URL. Is 'gh' logged in?")
             
             else:
-                selected = self.combo_repos.get()
+                selected = data["selected_repo"]
                 match = next((r for r in self.repo_list if r['name'] == selected), None)
                 if not match: raise Exception(f"Selected repo '{selected}' not found in list.")
                 url = match['url']
@@ -630,15 +676,15 @@ class PushAgentApp(ctk.CTk):
             
             repo_url = self.run_cmd(["git", "remote", "get-url", "origin"])
             self.log("Done!")
-            self.show_success(repo_url)
+            self.after(0, lambda: self.show_success(repo_url))
 
         except Exception as e:
             err_msg = traceback.format_exc()
             self.log(f"CRITICAL ERROR:\n{err_msg}")
-            messagebox.showerror("Error", f"An error occurred. Check log.\n{str(e)}")
+            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred. Check log.\n{str(e)}"))
         finally:
             self.is_running = False
-            self.btn_push.configure(state="normal", text="Push to GitHub")
+            self.after(0, lambda: self.btn_push.configure(state="normal", text="Push to GitHub"))
 
     def show_success(self, url):
         res = messagebox.askyesno("Success", "Code pushed to GitHub successfully!\n\nOpen repository in browser?")
