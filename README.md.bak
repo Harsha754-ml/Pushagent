@@ -1,20 +1,47 @@
-# PushAgent Reborn
+# pushagent
+In one sentence, this software is a project analyzer and README generator for Python projects, utilizing AI language models to enhance project auditing and README content generation.
 
-A minimalist, AI-powered Git wizard for Windows.
+## What This Tool Does
+This tool analyzes a Python project to build a file tree and extract code snippets from relevant files. It then audits the project by checking for missing configuration files (like `.gitignore` and `requirements.txt`) and creates them if they don't exist. Finally, it generates a `README.md` file content using AI language models from another server via API calls.
 
-## Features
-- **Global Hotkey:** `Ctrl+Shift+G` opens the wizard for your active folder.
-- **Smart Context:** Automatically detects if you need to create a repo or push changes.
-- **AI-Powered:** auto-generates commit messages and READMEs using Google Gemini.
-- **Project Isolation:** Zero context leaking between projects.
+## How It Works (Architecture)
+The tool consists of four main scripts:
 
-## Setup
-1. Run `install.ps1`.
-2. Get a free API Key from [Google AI Studio](https://aistudio.google.com/app/apikey).
-3. Press `Ctrl+Shift+G` in any project folder.
-4. Enter your API Key on the first run.
+*   `analyzer.py`: Responsible for scanning a project folder to build a file tree and extracting code snippets from relevant files.
+*   `auditor.py`: Checks for missing configuration files based on project type and creates them if they don't exist.
+*   `generator.py`: Fetches models and generates `README.md` file content via an API call to another server that utilizes language-model AI.
+*   `app.py`: Handles user interaction and interacts with the `analyzer` and `auditor` scripts to provide a GUI interface for the tool.
 
-## Workflow
-1. **New Project?** The wizard asks for a name and creates a private GitHub repo instantly.
-2. **Existing Project?** The wizard drafts a commit message for you.
-3. **Review & Push:** You check the message, toggle README generation, and click Push.
+## Installation
+To install this tool, you will need to install the following Python dependencies:
+
+*   `customtkinter` for GUI creation
+*   `requests` for API calls
+*   `pip install customtkinter requests`
+
+## How to Run
+To run the tool, execute `app.py` from the command line. This will start the GUI interface where you can select a project folder and run the analysis and auditing processes.
+
+## Technologies Used
+Based on the code, the following technologies and libraries are used:
+
+*   Python 3.x
+*   `customtkinter` for GUI creation
+*   `requests` for API calls
+*   `tkinter` for GUI creation (wrapped by `customtkinter`)
+*   `os` and `pathlib` for file system operations
+*   `json` for data parsing and generation
+*   `subprocess` for running shell commands
+
+## Project Structure
+The project structure consists of the following directories and files:
+
+*   `agent_gui.py`: The main script for creating the GUI interface.
+*   `analyzer.py`: The script responsible for scanning a project folder to build a file tree and extracting code snippets.
+*   `auditor.py`: The script that checks for missing configuration files and creates them if they don't exist.
+*   `generator.py`: The script that fetches models and generates `README.md` file content via an API call.
+*   `app.py`: The main script that handles user interaction and interacts with the `analyzer` and `auditor` scripts.
+*   `README.md`: A file that provides information about the project.
+
+## Why This Tool Is Useful
+This tool is useful for Python project maintainers and contributors who want to ensure their projects are well-organized and have all necessary configuration files. The tool's AI-powered `README.md` generation feature can also help improve the quality and readability of project documentation.
